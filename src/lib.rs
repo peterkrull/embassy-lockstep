@@ -1,74 +1,41 @@
 use core::task::Waker;
 use std::ptr::null_mut;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
 
 use embassy_executor::{SpawnToken, Spawner, raw};
 use embassy_time::Duration;
 use embassy_time_driver::Driver;
 use embassy_time_queue_utils::Queue;
 
-const CLAIM_ERROR_MSG: &'static str = "
-------------------------------------
-Attempt to claim LockstepExecutor twice!
-Tests should only run on a single thread
->> cargo test -- --test-threads=1 <<
-------------------------------------
-\n";
+pub mod tasks;
 
-pub struct LockstepExecutor {
-    executor: LazyLock<raw::Executor>,
-    claimed: AtomicBool,
-}
+/// Execute the task defined by `entry` in lockstep with the world model defined by the `world` closure.
+/// 
+/// # Panics
+/// If called twice within the same process.
+/// 
+/// This function intended to be run in tests which reside in their own process.
+/// The behavior of this function relies on global singletons being in a known initial state.
+/// The function will panic if this is not the case.
+pub fn lockstep_with<S>(
+    entry: impl Fn(Spawner) -> SpawnToken<S>,
+    mut world: impl FnMut() -> Option<Duration>,
+) {
+    let executor: &'static raw::Executor = Box::leak(Box::new(raw::Executor::new(null_mut())));
 
-impl LockstepExecutor {
-    pub const fn new() -> Self {
-        LockstepExecutor {
-            executor: LazyLock::new(|| raw::Executor::new(null_mut())),
-            claimed: AtomicBool::new(false),
-        }
-    }
+    assert_eq!(
+        DRIVER.ticks.swap(0, Ordering::Acquire), u64::MAX,
+        "The time driver has been used before"
+    );
 
-    /// Run the lockstep executor with an entry function and a world simulation.
-    pub unsafe fn with<S>(
-        &'static self,
-        entry: impl Fn(Spawner) -> SpawnToken<S>,
-        mut world: impl FnMut() -> Option<Duration>,
-    ) {
-        if self.claimed.swap(true, Ordering::AcqRel) {
-            panic!("{}", CLAIM_ERROR_MSG)
-        }
-        
-        // Ensure the spawner is not tainted from a prior run
-        assert_eq!(
-            as_slice(&*self.executor),
-            as_slice(&raw::Executor::new(null_mut())),
-            "The executor was left in a dirty state"
-        );
-        
-        // Reset time driver and spawn entry task
-        DRIVER.reset();
-        let spawner = self.executor.spawner();
-        spawner.spawn(entry(spawner)).unwrap();
+    let spawner = executor.spawner();
+    spawner.spawn(entry(spawner)).unwrap();
 
-        while let Some(dt) = world() {
-            unsafe { DRIVER.advance(dt.as_ticks(), &self.executor) };
-        }
-
-        self.claimed.store(false, Ordering::Release)
+    while let Some(dt) = world() {
+        unsafe { DRIVER.advance(dt.as_ticks(), executor) };
     }
 }
-
-fn as_slice<T>(data: &T) -> &[u8] {
-    unsafe {
-        let len = core::mem::size_of_val(data);
-        let ptr = core::ptr::addr_of!(*data);
-        core::slice::from_raw_parts(ptr as *const u8, len)
-    }
-}
-
-unsafe impl Send for LockstepExecutor {}
-unsafe impl Sync for LockstepExecutor {}
 
 static PENDING: AtomicBool = AtomicBool::new(true);
 
@@ -84,15 +51,10 @@ pub struct LockstepDriver {
 impl LockstepDriver {
     const fn new() -> Self {
         Self {
-            ticks: AtomicU64::new(0),
+            // Sentinel value to indicate the driver has never been used
+            ticks: AtomicU64::new(u64::MAX),
             queue: Mutex::new(Queue::new()),
         }
-    }
-
-    fn reset(&self) {
-        PENDING.store(true, Ordering::Release);
-        self.ticks.store(0, Ordering::Release);
-        *self.queue.lock().unwrap() = Queue::new();
     }
 
     fn next_expiration(&self) -> u64 {
@@ -102,7 +64,7 @@ impl LockstepDriver {
     /// Advances the simulation clock by a specific number of ticks,
     /// while completing all pending work within the executor.
     unsafe fn advance(&self, delta_ticks: u64, executor: &'static raw::Executor) {
-        let target = self.now() + delta_ticks;
+        let target = self.now().saturating_add(delta_ticks.max(1));
 
         loop {
             // Deque expired timers and poll tasks to completion
