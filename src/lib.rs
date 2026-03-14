@@ -26,7 +26,7 @@ pub fn lockstep_with<S>(
 
     assert_eq!(
         DRIVER.ticks.swap(0, Ordering::Acquire), u64::MAX,
-        "The time driver has been used before"
+        "The time driver has been used twice in a single process"
     );
 
     let spawner = executor.spawner();

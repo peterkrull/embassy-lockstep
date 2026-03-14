@@ -10,10 +10,7 @@ pub static TEST_RUNNING: AtomicBool = AtomicBool::new(true);
 #[test]
 fn test() {
     lockstep_with(test_entry, || {
-        assert!(
-            Instant::now().as_secs() < 60,
-            "Test did not complete in less than 60 seconds"
-        );
+        assert!(Instant::now().as_secs() < 60);
         TEST_RUNNING
             .load(Ordering::Relaxed)
             .then_some(Duration::from_millis(10))
