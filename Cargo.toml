@@ -1,0 +1,11 @@
+[package]
+name = "embassy-lockstep"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embassy-time = "0.5.0"
+embassy-time-driver = "0.2.1"
+embassy-time-queue-utils = "0.3.0"
+embassy-executor-macros = "0.7.0"
+embassy-executor = "0.9.1"
