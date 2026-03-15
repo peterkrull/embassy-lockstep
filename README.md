@@ -22,13 +22,13 @@ This is a minimal example, where the world simply defines a constant time step s
 ```rust
 use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_time::{Duration, Instant, Timer};
-use embassy_lockstep::{lockstep_with, tasks::firmware_main};
+use embassy_lockstep::{lockstep_with_task, tasks::firmware_main};
 
 pub static TEST_RUNNING: AtomicBool = AtomicBool::new(true);
 
 #[test]
 fn test() {
-    lockstep_with(test_entry, || {
+    lockstep_with_task(test_entry, || {
         assert!(
             Instant::now().as_secs() < 60,
             "Test did not complete in less than 60 seconds"
