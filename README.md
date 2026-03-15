@@ -17,7 +17,7 @@ To make tests run in their own process, they should be put in the `/tests` folde
 
 # Example
 
-This is a minimal example, where the world simply defines a constant time step size.
+This is a minimal example, where the world simply defines a constant time step size. For a more complete example, see the test in [Holsatus Flight](https://github.com/holsatus/holsatus-flight/blob/8af03a6845cc2fb9cc7fd3ad517ec8b105681314/device/std-test-device/src/lib.rs#L60-L79) for how a more advanced "world" may be used.
 
 ```rust
 use core::sync::atomic::{AtomicBool, Ordering};
