@@ -10,31 +10,37 @@ use embassy_time_queue_utils::Queue;
 
 pub mod tasks;
 
-/// Execute the task defined by `entry` in lockstep with the world model defined by the `world` closure.
+
+/// Use the `entry` closure to spawn all firmware tasks,
+/// and use the `world` to simulate an environment for the
+/// firmware to run in lockstep with.
 /// 
 /// # Panics
 /// If called twice within the same process.
-/// 
-/// This function intended to be run in tests which reside in their own process.
-/// The behavior of this function relies on global singletons being in a known initial state.
-/// The function will panic if this is not the case.
-pub fn lockstep_with<S>(
-    entry: impl Fn(Spawner) -> SpawnToken<S>,
+pub fn lockstep_with(
+    entry: impl FnOnce(Spawner),
     mut world: impl FnMut() -> Option<Duration>,
 ) {
-    let executor: &'static raw::Executor = Box::leak(Box::new(raw::Executor::new(null_mut())));
+    let executor= Box::leak(Box::new(raw::Executor::new(null_mut())));
 
     assert_eq!(
         DRIVER.ticks.swap(0, Ordering::Acquire), u64::MAX,
         "The time driver has been used twice in a single process"
     );
 
-    let spawner = executor.spawner();
-    spawner.spawn(entry(spawner)).unwrap();
+    entry(executor.spawner());
 
     while let Some(dt) = world() {
         unsafe { DRIVER.advance(dt.as_ticks(), executor) };
     }
+}
+
+/// Convenient version of [`lockstep_with`] when the entry function is an Embassy task.
+pub fn lockstep_with_task<S>(
+    entry: fn(Spawner) -> SpawnToken<S>,
+    world: impl FnMut() -> Option<Duration>,
+) {
+    lockstep_with(|spawner|spawner.must_spawn(entry(spawner)), world);
 }
 
 static PENDING: AtomicBool = AtomicBool::new(true);
@@ -73,11 +79,12 @@ impl LockstepDriver {
 
             // Keep polling while work is being pended
             while PENDING.swap(false, Ordering::AcqRel) {
-                continue;
+                unsafe { executor.poll() };
             }
 
             // Bump the tick count up to the next alarm (or target)
             let alarm = self.next_expiration();
+
             self.ticks.store(alarm.min(target), Ordering::Release);
 
             // We are done if the alarm exceeds target

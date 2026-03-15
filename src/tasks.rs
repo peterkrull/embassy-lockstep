@@ -7,7 +7,7 @@ use embassy_time::{Duration, Instant, Timer};
 // and all other tasks are launched.
 #[embassy_executor::task]
 pub async fn firmware_main(spawner: Spawner) {
-    println!("Hello from main");
+    println!("Hello from main (ticks: {})", Instant::now().as_ticks());
 
     spawner.must_spawn(task0());
     spawner.must_spawn(task1());
